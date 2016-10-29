@@ -71,9 +71,9 @@ CREATE TABLE `subscriptions` (
   `sub_topic` varchar(8192) NOT NULL,
   `sub_lease_seconds` int(11) NOT NULL,
   `sub_lease_end` varchar(40) NOT NULL,
-  `sub_secret` varchar(512) NOT NULL,
-  `sub_ping_ok` int(11) NOT NULL,
-  `sub_ping_error` int(11) NOT NULL,
+  `sub_secret` varchar(512),
+  `sub_ping_ok` int(11),
+  `sub_ping_error` int(11),
   PRIMARY KEY (`sub_id`),
   UNIQUE KEY `req_id` (`sub_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COMMENT='Subscription requests';

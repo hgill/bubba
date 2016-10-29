@@ -133,7 +133,7 @@ function saveSubscribe(obj){
 				values:[obj["hub.callback"],obj["hub.topic"]]
 			})
 			.flatMap(([rows,fields])=>{
-				console.log("in saveSubscribe",rows,fields);
+				console.log("in saveSubscribe",rows);
 				if(rows.length===0){
 					//new subscription
 					let q2=
@@ -143,9 +143,9 @@ function saveSubscribe(obj){
 					 UPDATE topics SET t_subscriber = t_subscriber + 1,t_updated = ? WHERE t_url = ?"
 					let now=moment().toISOString();
 					let leaseEnd=moment(now).add(obj["hub.lease_seconds"],'seconds').toISOString();
-					console.log(now,leaseEnd);
+
 					return rxmysqlquery({
-					 	sql:q,
+					 	sql:q2,
 					 	values:[now,now,obj["hub.callback"],
 					 			obj["hub.topic"],obj["hub.secret"],
 					 			obj["hub.lease_seconds"],leaseEnd,
@@ -153,7 +153,7 @@ function saveSubscribe(obj){
 					 })
 				}else if(rows.length===1){
 					//update subscription
-
+					console.log("rows.length===1")
 				}else {
 					throw Error("Logic error: Subscription - too many matches")
 				}
