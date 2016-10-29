@@ -1,0 +1,26 @@
+{
+  "name": "bubba",
+  "version": "1.0.0",
+  "description": "Pubsubhubbub - client, hub and poller - rolled in one. Give it any feed link - it will figure out the best way to push to you",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "devstart": "nodemon --legacy-watch --delay 1"
+  },
+  "dependencies": {
+    "body-parser": "^1.15.2",
+    "express": "^4.13.4",
+    "feedparser": "1.1.4",
+    "joi": "^9.2.0",
+    "lodash": "^4.13.1",
+    "mysql": "^2.11.1",
+    "request": "^2.72.0",
+    "rxjs": "^5.0.0-beta.8"
+  },
+  "devDependencies": {
+    "nodemon": ""
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}

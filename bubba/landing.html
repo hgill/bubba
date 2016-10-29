@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<title>Welcome to Bubba</title>
+</head>
+<body>
+<div style="width:60%;position:relative;left:20%;font-size:12px" id="main"></div>
+</body>
+<script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/showdown/1.4.3/showdown.min.js"></script>
+<script type="text/javascript">
+	let converter=new showdown.Converter();
+
+	let bodyText=
+`
+# Bubba says Hi
+
+MIT License
+
+### "Inspiration"
+Bubba is a Pubsubhubbub 0.4 spec + some more hub. It borrows liberally from the 0.4 implementations, especially cweiske's Phubb module, and Superfeedr.
+
+### Features
+Bubba extends the functionality of the spec, aiming to be a plug and play module, whether you are a subscriber, a publisher, or a hub:
+
+1. Subscribe to any topic/url
+	* If the feed publishes to *any PuSH hub*, bubba will subscribe itself to the origin for you and send "fat pings" to you when it gets updates.
+	* If the feed doesn't use PuSH, bubba will poll these feeds using min & max frequencies you specify, with exponential backoff. Again, bubba only provides you "fat pings".
+	* Bubba checks polled feeds for PuSH usage, meaning if and when they start using PuSH, you're covered.
+2. If you went offline but Bubba was online, you can ask it to give you updates since a certain time.    
+3. And the usual PuSH features - You can publish your feed to bubba and have your subscribers subscribe to your bubba server directly, and bubba will send them instant updates.
+
+### Installation
+Install Instructions - this is meant to be a plug and play module:
+1. Install docker on your machine
+2. (If installing locally) Setup port forwarding on your machine for to allow Bubba to subscribe to external feeds on your behalf
+3. Setup a docker volume for MySQL to use - This should be named MYSQLSTORAGE, or you can change docker-compose.yaml to reflect
+4. Alter docker-compose.yaml to enter your own changed settings<br>
+5. \`\`\`docker-compose up \`\`\`
+
+### Usage
+Publish or Subscribe per PuSH standards. Bubba will do the rest, whether PuSH is actually used or not.
+Send a POST request with usual PuSH parameters to **${window.location.href}** to play
+
+`
+console.log(converter.makeHtml(bodyText));
+document.getElementById("main").innerHTML=converter.makeHtml(bodyText);
+</script>
+</html>

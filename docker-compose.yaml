@@ -1,0 +1,43 @@
+version: '2'
+
+services:
+  mysql:
+    image: mysql
+    environment:
+    - MYSQL_ROOT_PASSWORD=password
+    volumes:
+    - mysqlst:/var/lib/mysql
+    networks:
+    - pushnet
+    ports:
+    - "3306:3306"
+  bubba:
+    build: ./bubba
+    volumes:
+    - ./bubba:/src
+    - npmcv:/src/node_modules
+    environment:
+    - MYSQL_HOST=mysql
+    - MYSQL_DATABASE=BUBBA
+    - MYSQL_PORT=3306
+    - MYSQL_USER=bubbaserver
+    - MYSQL_PASSWORD=password
+    - NODE_ENV=development
+    - NODE_PORT=5011
+    - PORT=5011
+    ports:
+    - "5011:5011"
+    networks:
+    - pushnet
+    depends_on:
+    - mysql
+volumes:
+  mysqlst:
+    external:
+      name: MYSQLSTORAGE
+  npmcv:
+      external:
+          name: NPMCACHE
+networks:
+  pushnet:
+    driver: bridge
