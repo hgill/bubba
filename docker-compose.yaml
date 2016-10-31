@@ -25,8 +25,11 @@ services:
     - NODE_ENV=development
     - NODE_PORT=5011
     - PORT=5011
+    - TESTADDRESS=http://192.168.99.100:5012
+    - BUBBAADDRESS=http://192.168.99.100:5011
     ports:
     - "5011:5011"
+    - "5012:5012"
     networks:
     - pushnet
     depends_on:

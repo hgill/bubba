@@ -1,4 +1,16 @@
-'use strict'
+'use strict';
+
+let childProcess=require("child_process");
+(function() {
+    var oldSpawn = childProcess.spawn;
+    function mySpawn() {
+        console.log('spawn called');
+        console.log(arguments);
+        var result = oldSpawn.apply(this, arguments);
+        return result;
+    }
+    childProcess.spawn = mySpawn;
+})();
 
 var express=require('express');
 var app = express();
@@ -14,24 +26,13 @@ let rxrequest=Rx.Observable.bindNodeCallback(request);
 let cheerio=require("cheerio");
 var _=require('lodash');
 let joi=require("joi");
-let pool=require('mysql').createPool({
-	connectionLimit:10,
-	multipleStatements:true,
-	host:process.env.MYSQL_HOST,
-	port: process.env.MYSQL_PORT,
-	user:process.env.MYSQL_USER,
-	password:process.env.MYSQL_PASSWORD,
-	database:process.env.MYSQL_DATABASE
-});
+let pool=require("./mysqlpool.js");
 
 let rxmysqlquery=Rx.Observable.bindNodeCallback(pool.query.bind(pool));//This shit
+let jssha=require("jssha");
 
 
-server.listen(process.env.NODE_PORT,function(){
-	console.log("bubba live on "+process.env.NODE_PORT);
-});
-
-
+ 
 app.use(bodyParser.json()); // for parsing application/json
 app.use(bodyParser.urlencoded({ extended: true })); // for parsing application/x-www-form-urlencoded
 
@@ -56,11 +57,13 @@ app.post("/",function(req,res){
 
 	let bodyV=joi.validate(body,bodySchema,{abortEarly:false});
 	if(headersV.error){
+		log("bubba got invalid req",headersV.error);
 		res.send(headersV.error);
 		return;
 	}
 
 	if(bodyV.error){
+		log("bubba got invalid req",bodyV.error);
 		res.send(bodyV.error);
 		return;
 	}
@@ -68,6 +71,11 @@ app.post("/",function(req,res){
 	//safe Objects = 
 
 	let safeBody=bodyV.value;
+	log("bubba got valid req",safeBody);
+
+	//Remove trailing slashes for uniqueness***
+	safeBody["hub.topic"].replace(/\/+$/, "");
+	safeBody["hub.callback"].replace(/\/+$/, "");
 
 	//subscribe logic
 	switch(safeBody["hub.mode"]){
@@ -75,13 +83,13 @@ app.post("/",function(req,res){
 						Rx.Observable.of(safeBody)
 						.flatMap(verifySubscriberRequest)
 						.flatMap(saveSubscribe)
-						.subscribe((d)=>{res.send(d)},(e)=>{res.send(e.message);});
+						.subscribe(([results,fields])=>{res.send(results)},(e)=>{res.send(e.message);});
 						break;
 		case "unsubscribe":
 						Rx.Observable.of(safeBody)
 						.flatMap(verifySubscriberRequest)
 						.flatMap(saveUnsubscribe)
-						.subscribe((d)=>{res.send(d)},(e)=>{res.send(e.message);});
+						.subscribe(([results,fields])=>{res.send(results)},(e)=>{res.send(e.message);});
 						break;
 		default:throw Error("Shouldn't have happened");
 	}
@@ -91,8 +99,8 @@ app.get("/",function(req,res){
 	res.sendFile(__dirname+"/landing.html")
 })
 
-function log(str){
-	console.log(str);
+function log(){
+	console.log("[bubbamain]",...arguments);
 }
 
 function verifySubscriberRequest(bod){
@@ -104,6 +112,7 @@ function verifySubscriberRequest(bod){
 	return rxrequest({method:"GET",url:cburl,timeout:10000})
 			.map(([res,body])=>{//arr output is Rx bug # 2094
 				let verified,failure_rationale;
+				log("bubba verification: ",body);
 				if(res.statusCode<300 && res.statusCode>=200){
 					verified=_.isEqual(decodeURIComponent(res.body),challenge);
 					if(!verified)
@@ -117,96 +126,90 @@ function verifySubscriberRequest(bod){
 }
 
 function saveUnsubscribe(obj){
-	let q="DELETE FROM subscriptions WHERE sub_callback = ? AND sub_topic = ?;\
-	UPDATE topics SET t_subscriber = t_subscriber - 1,t_updated = NOW() WHERE t_url = ?"
+
+	let now=moment().toISOString();
+	let subSha=getSHA256(obj["hub.callback"]+obj["hub.topic"]);
+	let topicSha=getSHA256(obj["hub.topic"]);
+ 
+	let q="	CALL unsubscribe(?,?,?)"
 	return rxmysqlquery({
 		sql:q,
-		values:[obj["hub.callback"],obj["hub.topic"],obj["hub.topic"]]
+		values:[subSha,topicSha,now]
 	});
 }
 
 function saveSubscribe(obj){
-	let q="SELECT sub_id FROM subscriptions WHERE sub_callback = ? AND sub_topic = ?";
 
+	let now=moment().toISOString();
+	let subSha=getSHA256(obj["hub.callback"]+obj["hub.topic"]);
+	let topicSha=getSHA256(obj["hub.topic"]);
+	let leaseEnd=moment(now).add(obj["hub.lease_seconds"],'seconds').toISOString();
+ 
+	let q="	CALL subscribe(?,?,?,?,?,?,?,?)"
 	return rxmysqlquery({
-				sql:q,
-				values:[obj["hub.callback"],obj["hub.topic"]]
-			})
-			.flatMap(([rows,fields])=>{
-				console.log("in saveSubscribe",rows);
-				if(rows.length===0){
-					//new subscription
-					let q2=
-					"INSERT INTO subscriptions(sub_created, sub_updated, sub_callback,\
-					 sub_topic, sub_secret, sub_lease_seconds, sub_lease_end)\
-					 VALUES(?,?,?,?,?,?,?);\
-					 UPDATE topics SET t_subscriber = t_subscriber + 1,t_updated = ? WHERE t_url = ?"
-					let now=moment().toISOString();
-					let leaseEnd=moment(now).add(obj["hub.lease_seconds"],'seconds').toISOString();
-
-					return rxmysqlquery({
-					 	sql:q2,
-					 	values:[now,now,obj["hub.callback"],
-					 			obj["hub.topic"],obj["hub.secret"],
-					 			obj["hub.lease_seconds"],leaseEnd,
-					 			now,obj["hub.topic"]]
-					 })
-				}else if(rows.length===1){
-					//update subscription
-					console.log("rows.length===1")
-				}else {
-					throw Error("Logic error: Subscription - too many matches")
-				}
-				return rows;
-
-			})
+		sql:q,
+		values:[subSha,topicSha,now,
+				obj["hub.callback"],
+				obj["hub.topic"],
+				obj["hub.secret"],
+				obj["hub.lease_seconds"],
+				leaseEnd]
+	});
 }
 
-    
- /*
-      if ($rowSub === false) {
-            //new subscription
-            $this->db->prepare(
-                'INSERT INTO subscriptions'
-                . '(sub_created, sub_updated, sub_callback, sub_topic, sub_secret'
-                . ', sub_lease_seconds, sub_lease_end)'
-                . ' VALUES(NOW(), NOW(), :callback, :topic, :secret'
-                . ', :leaseSeconds, :leaseEnd)'
-            )->execute(
-                array(
-                    ':callback' => $req->callback,
-                    ':topic'    => $req->topic,
-                    ':secret'   => $req->secret,
-                    ':leaseSeconds' => $req->leaseSeconds,
-                    ':leaseEnd' => date(
-                        'Y-m-d H:i:s', time() + $req->leaseSeconds
-                    )
-                )
-            );
-            $this->db->prepare(
-                'UPDATE topics SET t_subscriber = t_subscriber + 1'
-                . ',t_updated = NOW()'
-                . ' WHERE t_url = :topic'
-            )->execute(array(':topic' => $req->topic));
-            return;
-        }
-        //existing subscription
-        $this->db->prepare(
-            'UPDATE subscriptions SET'
-            . ' sub_updated = NOW()'
-            . ', sub_secret = :secret'
-            . ', sub_lease_seconds = :leaseSeconds'
-            . ', sub_lease_end = :leaseEnd'
-            . ' WHERE sub_id = :id'
-        )->execute(
-            array(
-                ':secret'       => $req->secret,
-                ':leaseSeconds' => $req->leaseSeconds,
-                ':leaseEnd'     => date(
-                    'Y-m-d H:i:s', time() + $req->leaseSeconds
-                ),
-                ':id'           => $rowSub->sub_id
-            )
-        );
+function getSHA256(str){
+	let shaObj=new jssha("SHA-256", "TEXT");
+	shaObj.update(str);
+	return shaObj.getHash("HEX");
+}
 
-        */
+
+let poller,tests;
+server.listen(process.env.NODE_PORT,function(){
+	console.log("bubba live on "+process.env.NODE_PORT);
+	const spawn = childProcess.spawn;
+	
+	tests = spawn("node",["./tests.js"]);
+
+	tests.stdout.on('data', (data) => {
+	  console.log(`[tests]: ${data}`);
+	});
+
+	tests.stderr.on('data', (data) => {
+	  console.log(`[tests]: ${data}`);
+	});
+
+	tests.on('close', (code) => {
+	  console.log(`Tests exited with code ${code}`);
+	});
+
+	poller = spawn("node",["./poller.js"]);
+
+	poller.stdout.on('data', (data) => {
+	  console.log(`[poller]: ${data}`);
+	});
+
+	poller.stderr.on('data', (data) => {
+	  console.log(`[poller]: ${data}`);
+	});
+
+	poller.on('close', (code) => {
+	  console.log(`[poller]: exited with code ${code}`);
+	});
+
+
+
+});
+
+process.on("SIGINT",gracefulExit);
+process.on("SIGTERM",gracefulExit);
+
+function gracefulExit(){
+	console.log("Shutting down");
+	poller.kill("SIGTERM");
+	tests.kill("SIGTERM");
+	 server.close(function () {
+    process.exit(0);
+  });
+
+}

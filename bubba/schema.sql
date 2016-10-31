@@ -2,7 +2,7 @@
 --
 -- Host: 127.0.0.1    Database: phubb
 -- ------------------------------------------------------
--- Server version	5.5.41-0ubuntu0.14.04.1
+-- Server version 5.5.41-0ubuntu0.14.04.1
 
 /*!40101 SET @OLD_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT */;
 /*!40101 SET @OLD_CHARACTER_SET_RESULTS=@@CHARACTER_SET_RESULTS */;
@@ -24,9 +24,9 @@ DROP TABLE IF EXISTS `pingrequests`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `pingrequests` (
   `pr_id` int(11) NOT NULL AUTO_INCREMENT,
-  `pr_created` varchar(40) NOT NULL,
-  `pr_updated` varchar(40) NOT NULL,
-  `pr_url` varchar(8192) NOT NULL,
+  `pr_created` varchar(24) NOT NULL,
+  `pr_updated` varchar(24) NOT NULL,
+  `pr_url` text NOT NULL,
   `pr_subscribers` int(11) NOT NULL,
   `pr_ping_ok` int(11) NOT NULL,
   `pr_ping_reping` int(11) NOT NULL,
@@ -46,11 +46,11 @@ CREATE TABLE `repings` (
   `rp_id` int(11) NOT NULL AUTO_INCREMENT,
   `rp_pr_id` int(11) NOT NULL,
   `rp_sub_id` int(11) NOT NULL,
-  `rp_created` varchar(40) NOT NULL,
-  `rp_updated` varchar(40) NOT NULL,
+  `rp_created` varchar(24) NOT NULL,
+  `rp_updated` varchar(24) NOT NULL,
   `rp_iteration` int(11) NOT NULL DEFAULT '0',
   `rp_scheduled` int(11) NOT NULL,
-  `rp_next_try` varchar(40) NOT NULL,
+  `rp_next_try` varchar(24) NOT NULL,
   `rp_last_error` varchar(256) NOT NULL,
   PRIMARY KEY (`rp_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
@@ -64,18 +64,17 @@ DROP TABLE IF EXISTS `subscriptions`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `subscriptions` (
-  `sub_id` int(11) NOT NULL AUTO_INCREMENT,
-  `sub_created` varchar(40) NOT NULL,
-  `sub_updated` varchar(40) NOT NULL,
-  `sub_callback` varchar(8192) NOT NULL,
-  `sub_topic` varchar(8192) NOT NULL,
+  `sub_sha256` varchar(64) NOT NULL,
+  `sub_created` varchar(24) NOT NULL,
+  `sub_updated` varchar(24) NOT NULL,
+  `sub_callback` text NOT NULL,
+  `sub_topic` text NOT NULL,
   `sub_lease_seconds` int(11) NOT NULL,
-  `sub_lease_end` varchar(40) NOT NULL,
-  `sub_secret` varchar(512),
+  `sub_lease_end` varchar(24) NOT NULL,
+  `sub_secret` varchar(64),
   `sub_ping_ok` int(11),
   `sub_ping_error` int(11),
-  PRIMARY KEY (`sub_id`),
-  UNIQUE KEY `req_id` (`sub_id`)
+  PRIMARY KEY (`sub_sha256`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COMMENT='Subscription requests';
 /*!40101 SET character_set_client = @saved_cs_client */;
 
@@ -87,14 +86,14 @@ DROP TABLE IF EXISTS `topics`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `topics` (
-  `t_id` int(11) NOT NULL AUTO_INCREMENT,
-  `t_updated` varchar(40) NOT NULL,
-  `t_url` varchar(8192) NOT NULL,
-  `t_subscriber` int(11) NOT NULL,
-  `t_change_date` varchar(40) NOT NULL,
-  `t_content_md5` varchar(32) NOT NULL,
-  `t_etag` varchar(32) NOT NULL,
-  PRIMARY KEY (`t_id`)
+  `t_sha256` varchar(64) NOT NULL,
+  `t_url` text NOT NULL,
+  `t_added` varchar(24) NOT NULL,
+  `t_subscriptions` int(11) NOT NULL DEFAULT 1,
+  `t_type` VARCHAR(4) NOT NULL DEFAULT "POLL", -- assigned POLL initially, can be changed to PUSH later
+  `t_lastmodified` varchar(40), -- updated at every fetch - http date from fetch
+  `t_nextupdate` varchar(40), -- updated at every fetch - ISO date 
+  PRIMARY KEY (`t_sha256`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 /*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
@@ -107,4 +106,59 @@ CREATE TABLE `topics` (
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
 
--- Dump completed on 2015-04-08 21:42:58
+
+DELIMITER //
+DROP PROCEDURE IF EXISTS `unsubscribe`;//
+CREATE PROCEDURE unsubscribe(IN subSha VARCHAR(64),
+                              IN topicSha VARCHAR(64),
+                              IN isodate VARCHAR(24))
+BEGIN
+  DECLARE deletable INT DEFAULT 0;
+
+  SELECT COUNT(*) FROM subscriptions WHERE sub_sha256=subSha INTO deletable;
+  IF deletable =  1 THEN
+    UPDATE topics SET t_subscriptions=t_subscriptions-1 WHERE t_sha256=topicSha;
+    DELETE FROM subscriptions WHERE sub_sha256=subSha;
+  END IF;
+  SELECT * FROM subscriptions WHERE sub_sha256=subSha;
+  SELECT * FROM topics WHERE t_sha256=topicSha;  
+END//
+
+DROP PROCEDURE IF EXISTS `subscribe`;//
+CREATE PROCEDURE subscribe(IN subSha VARCHAR(65535),
+                              IN topicSha VARCHAR(65535),
+                              IN isodate VARCHAR(65535), 
+                              IN hubCallback VARCHAR(65535), 
+                              IN hubTopic VARCHAR(65535), 
+                              IN hubSecret VARCHAR(65535), 
+                              IN hubLeaseSeconds INT, 
+                              IN leaseEnd VARCHAR(65535) )
+BEGIN
+  DECLARE topicexists INT DEFAULT 0;
+  DECLARE subscriptionexists INT DEFAULT 0;
+  
+  SELECT count(*) FROM subscriptions WHERE sub_sha256=subSha INTO subscriptionexists;
+  SELECT count(*) FROM topics WHERE t_sha256=topicSha INTO topicexists;  
+
+  IF subscriptionexists=1 AND topicexists=1 THEN
+    UPDATE subscriptions SET sub_updated = isodate, sub_lease_seconds = hubLeaseSeconds, sub_lease_end = leaseEnd WHERE sub_sha256=subSha;
+  ELSEIF subscriptionexists=0 AND topicexists=1 THEN
+  INSERT INTO subscriptions(sub_sha256, sub_created, sub_updated, sub_callback, sub_topic, sub_secret, sub_lease_seconds, sub_lease_end) VALUES(subSha,isodate,isodate,hubCallback,hubTopic,hubSecret,hubLeaseSeconds,leaseEnd) ;
+  UPDATE topics SET t_subscriptions = t_subscriptions + 1 WHERE t_sha256=topicSha;
+  ELSEIF subscriptionexists=0 AND topicexists=0 THEN
+      INSERT INTO subscriptions(sub_sha256, sub_created, sub_updated, sub_callback, sub_topic, sub_secret, sub_lease_seconds, sub_lease_end) VALUES(subSha,isodate,isodate,hubCallback,hubTopic,hubSecret,hubLeaseSeconds,leaseEnd);
+      INSERT INTO topics (t_sha256, t_added, t_url) VALUES (topicSha, isodate, hubTopic);        
+##  ELSEIF subscriptionexists=1 AND topicexists=0 THEN
+  
+  END IF;
+  SELECT * FROM subscriptions WHERE sub_sha256=subSha;
+  SELECT * FROM topics WHERE t_sha256=topicSha;  
+
+END//
+
+DROP PROCEDURE IF EXISTS `getpolltopics`;//
+CREATE PROCEDURE getpolltopics(IN isonow VARCHAR(24))
+BEGIN
+  SELECT * FROM topics WHERE t_type="POLL" AND STRCMP(t_nextupdate,isonow)=-1 OR t_nextupdate IS NULL OR t_nextupdate='';
+END//
+DELIMITER ;
