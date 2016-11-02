@@ -14,7 +14,7 @@ var server = require('http').Server(app);
 
 
 
-let topicKeys=["t_sha256","t_url","t_subscriptions","t_lastmodified","t_nextupdate","t_type","t_added"];
+let topicKeys=["t_sha256","t_url","t_subscriptions","t_lastmodified","t_nextFetchDue","t_type","t_added"];
 let subKeys=["sub_sha256","sub_created","sub_updated","sub_callback","sub_topic","sub_lease_seconds","sub_lease_end","sub_secret","sub_ping_ok","sub_ping_error"];
 
 
@@ -31,9 +31,9 @@ server.listen(5012,function(){
 		t.end();
 	})
 	test("Safe Requests - Should subscribe and unsubscribe properly",t=>{
-		let subs={"hub.callback":me+"/childcb",
-					"hub.topic": "http://www.reuters.com",
-					"hub.mode": "subscribe"
+		let subs={"cb":me+"/childcb",
+					"t": "http://testdeletetestdelete.com",
+					"mode": "subscribe"
 					}
 			t.ok(true,"NEXT TEST: GET REQUEST to "+bubbahost);
 
@@ -45,7 +45,7 @@ server.listen(5012,function(){
 			
 			t.ok(true,"NEXT TEST: POST REQUEST SUBSCRIBE");
 			return rp({url:bubbahost,method:"POST",
-				form:`hub.callback=${me}/childcb&hub.topic=http://www.reuters.com&hub.mode=subscribe`,
+				form:`hub.callback=${subs.cb}&hub.topic=${subs.t}&hub.mode=subscribe`,
 				timout:10000});
 		}).then((res)=>{
 
@@ -65,7 +65,7 @@ server.listen(5012,function(){
 
 			t.ok(true,"NEXT TEST: POST REQUEST UNSUBSCRIBE");
 			return rp({url:bubbahost,method:"POST",
-					form:`hub.callback=${me}/childcb&hub.topic=http://www.reuters.com&hub.mode=unsubscribe`})
+					form:`hub.callback=${subs.cb}&hub.topic=${subs.t}&hub.mode=unsubscribe`})
 		}).then((res)=>{
 			t.assert(res.statusCode===200," - Status code 200");
 

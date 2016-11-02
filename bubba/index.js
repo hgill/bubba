@@ -57,13 +57,11 @@ app.post("/",function(req,res){
 
 	let bodyV=joi.validate(body,bodySchema,{abortEarly:false});
 	if(headersV.error){
-		log("bubba got invalid req",headersV.error);
 		res.send(headersV.error);
 		return;
 	}
 
 	if(bodyV.error){
-		log("bubba got invalid req",bodyV.error);
 		res.send(bodyV.error);
 		return;
 	}
@@ -71,7 +69,6 @@ app.post("/",function(req,res){
 	//safe Objects = 
 
 	let safeBody=bodyV.value;
-	log("bubba got valid req",safeBody);
 
 	//Remove trailing slashes for uniqueness***
 	safeBody["hub.topic"].replace(/\/+$/, "");
@@ -112,7 +109,6 @@ function verifySubscriberRequest(bod){
 	return rxrequest({method:"GET",url:cburl,timeout:10000})
 			.map(([res,body])=>{//arr output is Rx bug # 2094
 				let verified,failure_rationale;
-				log("bubba verification: ",body);
 				if(res.statusCode<300 && res.statusCode>=200){
 					verified=_.isEqual(decodeURIComponent(res.body),challenge);
 					if(!verified)
@@ -181,20 +177,22 @@ server.listen(process.env.NODE_PORT,function(){
 
 	tests.on('close', (code) => {
 	  console.log(`Tests exited with code ${code}`);
-	});
+	  //This must move out in production
+	  	poller = spawn("node",["./poller.js"]);
 
-	poller = spawn("node",["./poller.js"]);
+		poller.stdout.on('data', (data) => {
+		  console.log(`[poller]: ${data}`);
+		});
 
-	poller.stdout.on('data', (data) => {
-	  console.log(`[poller]: ${data}`);
-	});
+		poller.stderr.on('data', (data) => {
+		  console.log(`[poller]: ${data}`);
+		});
 
-	poller.stderr.on('data', (data) => {
-	  console.log(`[poller]: ${data}`);
-	});
+		poller.on('close', (code) => {
+		  console.log(`[poller]: exited with code ${code}`);
+		});
 
-	poller.on('close', (code) => {
-	  console.log(`[poller]: exited with code ${code}`);
+
 	});
 
 
