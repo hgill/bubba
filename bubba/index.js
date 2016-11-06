@@ -48,7 +48,7 @@ app.post("/",function(req,res){
 	
 	let bodySchema=joi.object({
 		"hub.callback":joi.string().uri().required(),
-		"hub.mode":joi.string().valid(["subscribe","unsubscribe"]).required(),
+		"hub.mode":joi.string().valid(["subscribe","unsubscribe","reconcile"]).required(),
 		"hub.topic":joi.string().uri().required(),
 		"hub.lease_seconds":joi.number().optional().default(7 * 86400 + 3600),
 		"hub.secret":joi.string().optional(),
@@ -87,6 +87,10 @@ app.post("/",function(req,res){
 						.flatMap(verifySubscriberRequest)
 						.flatMap(saveUnsubscribe)
 						.subscribe(([results,fields])=>{res.send(results)},(e)=>{res.send(e.message);});
+						break;
+		case "reconcile":
+						console.log("Reconcile request received: ",safeBody);
+						res.send("will reconcile")
 						break;
 		default:throw Error("Shouldn't have happened");
 	}
@@ -199,13 +203,18 @@ server.listen(process.env.NODE_PORT,function(){
 
 });
 
+
+/********* This will work after changing CMD exec to ["node", "index.js"] ***********/
 process.on("SIGINT",gracefulExit);
 process.on("SIGTERM",gracefulExit);
+
+process.on("exit",gracefulExit);
 
 function gracefulExit(){
 	console.log("Shutting down");
 	poller.kill("SIGTERM");
 	tests.kill("SIGTERM");
+	process.exit(0);
 	 server.close(function () {
     process.exit(0);
   });

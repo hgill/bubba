@@ -19,46 +19,7 @@
 -- CREATE DATABASE BUBBA CHARACTER SET utf8mb4;
 
 USE BUBBA;
---
--- Table structure for table `pingrequests`
---
-
-DROP TABLE IF EXISTS `pingrequests`;
-/*!40101 SET @saved_cs_client     = @@character_set_client */;
-/*!40101 SET character_set_client = utf8mb4 */;
-CREATE TABLE `pingrequests` (
-  `pr_id` int(11) NOT NULL AUTO_INCREMENT,
-  `pr_created` varchar(24) NOT NULL,
-  `pr_updated` varchar(24) NOT NULL,
-  `pr_url` text NOT NULL,
-  `pr_subscribers` int(11) NOT NULL,
-  `pr_ping_ok` int(11) NOT NULL,
-  `pr_ping_reping` int(11) NOT NULL,
-  `pr_ping_error` int(11) NOT NULL,
-  PRIMARY KEY (`pr_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-/*!40101 SET character_set_client = @saved_cs_client */;
-
---
--- Table structure for table `repings`
---
-
-DROP TABLE IF EXISTS `repings`;
-/*!40101 SET @saved_cs_client     = @@character_set_client */;
-/*!40101 SET character_set_client = utf8mb4 */;
-CREATE TABLE `repings` (
-  `rp_id` int(11) NOT NULL AUTO_INCREMENT,
-  `rp_pr_id` int(11) NOT NULL,
-  `rp_sub_id` int(11) NOT NULL,
-  `rp_created` varchar(24) NOT NULL,
-  `rp_updated` varchar(24) NOT NULL,
-  `rp_iteration` int(11) NOT NULL DEFAULT '0',
-  `rp_scheduled` int(11) NOT NULL,
-  `rp_next_try` varchar(24) NOT NULL,
-  `rp_last_error` varchar(256) NOT NULL,
-  PRIMARY KEY (`rp_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-/*!40101 SET character_set_client = @saved_cs_client */;
+SET NAMES utf8mb4;
 
 --
 -- Table structure for table `subscriptions`
@@ -72,12 +33,12 @@ CREATE TABLE `subscriptions` (
   `sub_created` varchar(24) NOT NULL,
   `sub_updated` varchar(24) NOT NULL,
   `sub_callback` text NOT NULL,
-  `sub_topic` text NOT NULL,
+  `ref_t_sha256` varchar(64) NOT NULL,
   `sub_lease_seconds` int(11) NOT NULL,
   `sub_lease_end` varchar(24) NOT NULL,
   `sub_secret` varchar(64),
-  `sub_ping_ok` int(11),
-  `sub_ping_error` int(11),
+  `ref_last_c_sha256` varchar(64),
+  `sub_suspended` BOOLEAN DEFAULT FALSE,
   PRIMARY KEY (`sub_sha256`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Subscription requests';
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -119,7 +80,7 @@ DROP TABLE IF EXISTS `content`;
 /*!40101 SET character_set_client = utf8mb4 */;
 CREATE TABLE `content` (
   `c_sha256` varchar(64) NOT NULL,
-  `t_sha256` varchar(64) NOT NULL,
+  `ref_t_sha256` varchar(64) NOT NULL,
   `c_added` varchar(24) NOT NULL,
   `c_body` text,
   `c_restofresponse` text, -- assigned POLL initially, can be changed to PUSH later
@@ -141,10 +102,10 @@ DROP TABLE IF EXISTS `errors`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!40101 SET character_set_client = utf8mb4 */;
 CREATE TABLE `errors` (
-  `e_refsha256` varchar(64) NOT NULL,
+  `ref_X_sha256` varchar(64) NOT NULL,
+  `e_reftype` VARCHAR(20) NOT NULL,
   `e_content` text NOT NULL,
-  `e_added` varchar(24) NOT NULL,
-  `e_type` VARCHAR(10) NOT NULL
+  `e_added` varchar(24) NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 /*!40101 SET character_set_client = @saved_cs_client */;
 /*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
@@ -159,9 +120,9 @@ CREATE TABLE `errors` (
 
 DELIMITER //
 DROP PROCEDURE IF EXISTS `unsubscribe`;//
-CREATE PROCEDURE unsubscribe(IN subSha VARCHAR(64),
-                              IN topicSha VARCHAR(64),
-                              IN isodate VARCHAR(24))
+CREATE PROCEDURE unsubscribe(IN subSha TEXT,
+                              IN topicSha TEXT,
+                              IN isodate TEXT)
 BEGIN
   DECLARE deletable INT DEFAULT 0;
 
@@ -175,14 +136,14 @@ BEGIN
 END//
 
 DROP PROCEDURE IF EXISTS `subscribe`;//
-CREATE PROCEDURE subscribe(IN subSha VARCHAR(65535),
-                              IN topicSha VARCHAR(65535),
-                              IN isodate VARCHAR(65535), 
-                              IN hubCallback VARCHAR(65535), 
-                              IN hubTopic VARCHAR(65535), 
-                              IN hubSecret VARCHAR(65535), 
+CREATE PROCEDURE subscribe(IN subSha TEXT,
+                              IN topicSha TEXT,
+                              IN isodate TEXT, 
+                              IN hubCallback TEXT, 
+                              IN hubTopic TEXT, 
+                              IN hubSecret TEXT, 
                               IN hubLeaseSeconds INT, 
-                              IN leaseEnd VARCHAR(65535) )
+                              IN leaseEnd TEXT )
 BEGIN
   DECLARE topicexists INT DEFAULT 0;
   DECLARE subscriptionexists INT DEFAULT 0;
@@ -193,10 +154,10 @@ BEGIN
   IF subscriptionexists=1 AND topicexists=1 THEN
     UPDATE subscriptions SET sub_updated = isodate, sub_lease_seconds = hubLeaseSeconds, sub_lease_end = leaseEnd WHERE sub_sha256=subSha;
   ELSEIF subscriptionexists=0 AND topicexists=1 THEN
-  INSERT INTO subscriptions(sub_sha256, sub_created, sub_updated, sub_callback, sub_topic, sub_secret, sub_lease_seconds, sub_lease_end) VALUES(subSha,isodate,isodate,hubCallback,hubTopic,hubSecret,hubLeaseSeconds,leaseEnd) ;
+  INSERT INTO subscriptions(sub_sha256, sub_created, sub_updated, sub_callback, ref_t_sha256, sub_secret, sub_lease_seconds, sub_lease_end) VALUES(subSha,isodate,isodate,hubCallback,topicSha,hubSecret,hubLeaseSeconds,leaseEnd) ;
   UPDATE topics SET t_subscriptions = t_subscriptions + 1 WHERE t_sha256=topicSha;
   ELSEIF subscriptionexists=0 AND topicexists=0 THEN
-      INSERT INTO subscriptions(sub_sha256, sub_created, sub_updated, sub_callback, sub_topic, sub_secret, sub_lease_seconds, sub_lease_end) VALUES(subSha,isodate,isodate,hubCallback,hubTopic,hubSecret,hubLeaseSeconds,leaseEnd);
+      INSERT INTO subscriptions(sub_sha256, sub_created, sub_updated, sub_callback, ref_t_sha256, sub_secret, sub_lease_seconds, sub_lease_end) VALUES(subSha,isodate,isodate,hubCallback,topicSha,hubSecret,hubLeaseSeconds,leaseEnd);
       INSERT INTO topics (t_sha256, t_added, t_url) VALUES (topicSha, isodate, hubTopic);        
 ##  ELSEIF subscriptionexists=1 AND topicexists=0 THEN
   
@@ -206,35 +167,85 @@ BEGIN
 
 END//
 
-DROP PROCEDURE IF EXISTS `getpolltopics`;//
-CREATE PROCEDURE getpolltopics(IN isonow VARCHAR(24))
+DROP PROCEDURE IF EXISTS `getPollTopics`;//
+CREATE PROCEDURE getPollTopics(IN isonow VARCHAR(24))
 BEGIN
   SELECT * FROM topics WHERE (t_type="POLL" OR t_type="ERR") AND ((STRCMP(t_nextFetchDue,isonow)=-1) OR (t_nextFetchDue IS NULL) OR (t_nextFetchDue=''));
 END//
 
 DROP PROCEDURE IF EXISTS `saveFetchContent`;//
-CREATE PROCEDURE saveFetchContent(IN c_sha VARCHAR(65535),
-                                  IN t_sha VARCHAR(65535),                                  
+CREATE PROCEDURE saveFetchContent(IN c_sha TEXT,
+                                  IN t_sha TEXT,                                  
                                   IN body TEXT,
                                   IN restofresponse TEXT,
-                                  IN now VARCHAR(65535),
-                                  IN lastModified VARCHAR(65535),
-                                  IN nextFetchDue VARCHAR(65535),
+                                  IN now TEXT,
+                                  IN lastModified TEXT,
+                                  IN nextFetchDue TEXT,
                                   IN statusCode INT
                                   )
 BEGIN
   UPDATE topics SET t_lastmodified=lastModified, t_nextFetchDue=nextFetchDue,t_type="POLL" WHERE t_sha256=t_sha;
-  INSERT INTO content(t_sha256,c_sha256,c_body,c_restofresponse,c_added,c_statusCode) VALUES(t_sha,c_sha,body,restofresponse,now,statusCode);
+  INSERT INTO content(ref_t_sha256,c_sha256,c_body,c_restofresponse,c_added,c_statusCode) VALUES(t_sha,c_sha,body,restofresponse,now,statusCode);
 END//
 
 DROP PROCEDURE IF EXISTS `markTopicError`;//
-CREATE PROCEDURE markTopicError(IN t_sha VARCHAR(65535),
-                                IN content TEXT,
-                                IN added VARCHAR(65535)
-                                )
+CREATE PROCEDURE markTopicError(IN t_sha TEXT)
 BEGIN
   UPDATE topics SET t_lastmodified=NULL, t_nextFetchDue=NULL,t_type="ERR" WHERE t_sha256=t_sha;
-  INSERT INTO errors(e_refsha256,e_content,e_type,e_added) VALUES(t_sha,content,"topic",added);
+END//
+
+DROP PROCEDURE IF EXISTS `saveError`;//
+CREATE PROCEDURE saveError(IN refsha TEXT,
+                                IN type TEXT,
+                                IN content TEXT,
+                                IN added TEXT
+                                )
+BEGIN
+  INSERT INTO errors(ref_X_sha256,e_reftype,e_content,e_added) VALUES(refsha,type,content,added);
+END//
+
+DROP PROCEDURE IF EXISTS `getValidSubscribersAndLatestContent`;//
+CREATE PROCEDURE getValidSubscribersAndLatestContent(IN trefSha TEXT)
+BEGIN
+  select * from subscriptions where ref_t_sha256=trefSha and sub_suspended != TRUE;
+  select * from content where ref_t_sha256=trefsha and c_statusCode != 304 order by c_added desc LIMIT 1;   
+END//
+
+DROP PROCEDURE IF EXISTS `markSubscriptionSuspended`;//
+CREATE PROCEDURE markCallbackSuspended(IN subSha TEXT)
+BEGIN
+  UPDATE subscriptions SET sub_suspended=true WHERE sub_sha256=subSha;
+END//
+
+DROP PROCEDURE IF EXISTS `removeSubscriptionSuspended`;//
+CREATE PROCEDURE removeCallbackSuspended(IN subSha TEXT)
+BEGIN
+  UPDATE subscriptions SET sub_suspended=false WHERE sub_sha256=subSha;
+END//
+
+DROP PROCEDURE IF EXISTS `updateSubscriptionLastContentSent`;//
+CREATE PROCEDURE updateSubscriptionLastContentSent(IN subSha TEXT,
+                                            IN lastcsha TEXT
+                                            )
+BEGIN
+  UPDATE subscriptions SET ref_last_c_sha256=lastcsha WHERE sub_sha256=subSha;
 END//
 
 DELIMITER ;
+
+
+/*******WIP
+Just input sub_sha as input - get all content after stored 
+
+--Add IF subscriptions.ref_last_c_sha256 null clause as a higher level JS check;
+
+select sub_sha256,sub_callback,ref_last_c_sha256,subscriptions.ref_t_sha256,c_added,t_url from subscriptions left join content on subscriptions.ref_last_c_sha256=content.c_sha256 left join topics on subscriptions.ref_t_sha256=topics.t_sha256 where subscriptions.sub_sha256="06cbbcb7f8c3b7b675cfc017b8cd841d5837335d26672a453343f185af101710" into @ssha,@scb,@clastsha,@tsha,@after,@url;
+
+
+select @ssha,@scb,@clastsha,@tsha,@after,@url,c1.* from content c1 where c1.c_statusCode!=304 AND c1.c_added>=@after and c1.ref_t_sha256=@tsha order by c1.c_added asc;
+
+
+
+
+
+************/
