@@ -4,8 +4,8 @@ let childProcess=require("child_process");
 (function() {
     var oldSpawn = childProcess.spawn;
     function mySpawn() {
-        console.log('spawn called');
-        console.log(arguments);
+        log('spawn called');
+        log(arguments);
         var result = oldSpawn.apply(this, arguments);
         return result;
     }
@@ -89,8 +89,17 @@ app.post("/",function(req,res){
 						.subscribe(([results,fields])=>{res.send(results)},(e)=>{res.send(e.message);});
 						break;
 		case "reconcile":
-						console.log("Reconcile request received: ",safeBody);
-						res.send("will reconcile")
+						
+						
+
+						Rx.Observable.of(safeBody)
+						.flatMap(getAllSuspendedByCallback)
+						.do((rows)=>{
+							safeBody.toBeReconciled={count:rows.length,topics:"Cant disclose topics :|"};//count should help backoff
+							res.status(200).send(safeBody);	
+						})
+						.flatMap(reconcileSubscriptionsSequentially,1)
+						.subscribe((d)=>{log("Recon End: ",d)},(err)=>{log("Recon Err: ",err.message)});
 						break;
 		default:throw Error("Shouldn't have happened");
 	}
@@ -101,7 +110,7 @@ app.get("/",function(req,res){
 })
 
 function log(){
-	console.log("[bubbamain]",...arguments);
+	console.log("[bubbamain]\n",...arguments);
 }
 
 function verifySubscriberRequest(bod){
@@ -163,37 +172,104 @@ function getSHA256(str){
 	return shaObj.getHash("HEX");
 }
 
+function getAllSuspendedByCallback(obj){
+
+	let cb=obj["hub.callback"];
+	
+	let q="	CALL getAllSuspendedByCallback(?)"
+	return rxmysqlquery({
+		sql:q,
+		values:[cb]
+	}).map(([[rows,fields]])=>{//screwed up return cuz of multiple queries - fix in future v
+		return rows;
+	});
+}
+
+function reconcileSubscriptionsSequentially(subRows){
+
+	return Rx.Observable.from(subRows)
+			.flatMap((subRow)=>{
+				let q="CALL reconcileSubscription(?)";
+
+				return rxmysqlquery({sql:q, values:[subRow.sub_sha256]})
+						.flatMap(([[cRows,fields]])=>{//screwed up return cuz of multiple queries - fix in future v
+							return Rx.Observable.from(cRows)
+									.flatMap((cRow)=>{
+										/*
+											cRow is {'scb','tsha','url','c_sha256','ref_t_sha256','c_added','c_body','c_restofresponse','c_statusCode' }
+										*/
+
+										return rxrequest({url:cRow.scb,
+															method:"POST",
+															json:true,
+															body:{restofresponse:cRow.c_restofresponse,
+																body:cRow.c_body,
+																topic:cRow.url,
+																reconciling:true},
+															timeout:10000
+														})
+												.flatMap(([response])=>{
+														if(!(response.statusCode===200 && _.isEqual(response.body,cRow.url))) 
+															throw Error("Validation failed - response from callback")
+
+														let q="CALL updateSubscriptionLastContentSent(?,?)"
+														return rxmysqlquery({
+															sql:q,
+															values:[subRow.sub_sha256,cRow.c_sha256]
+														}).map((d)=>({success:"Sent and saved",subcb:subRow.sub_sha256,topic:cRow.url}))
+												})
+												.catch((err)=>{
+													let q="CALL markSubscriptionSuspended(?)";
+
+													return rxmysqlquery({
+														sql:q,
+														values:[subRow.sub_sha256]
+													}).map((d)=>({error:(err.message?err.message:err),reconTopic:cRow.url,subcb:subRow.sub_sha256}))
+												})
+												
+									})
+						},1)
+						.reduce((aggregate,nth)=>{nth.error?aggregate.reconErr++:aggregate.reconCount++;return aggregate},
+							{reconCount:0,reconErr:0,subRow:subRow})
+						.do((d)=>{
+							if(d.reconErr===0){//remove suspension
+								rxmysqlquery({sql:"CALL removeSubscriptionSuspended(?)",values:[subRow.sub_sha256]})
+								.subscribe((d)=>{log("Suspension was removed: ",subRow.sub_sha256)},err=>{log("Suspension was not removed: ",subRow.sub_sha256)})
+							}
+						})
+			},1)
+}
 
 let poller,tests;
 server.listen(process.env.NODE_PORT,function(){
-	console.log("bubba live on "+process.env.NODE_PORT);
+	log("bubba live on "+process.env.NODE_PORT);
 	const spawn = childProcess.spawn;
 	
 	tests = spawn("node",["./tests.js"]);
 
 	tests.stdout.on('data', (data) => {
-	  console.log(`[tests]: ${data}`);
+	  console.log(`[tests]:\n ${data}`);
 	});
 
 	tests.stderr.on('data', (data) => {
-	  console.log(`[tests]: ${data}`);
+	  console.log(`[tests]:\n ${data}`);
 	});
 
 	tests.on('close', (code) => {
-	  console.log(`Tests exited with code ${code}`);
+	  console.log(`[tests]: exited with code ${code}`);
 	  //This must move out in production
 	  	poller = spawn("node",["./poller.js"]);
 
 		poller.stdout.on('data', (data) => {
-		  console.log(`[poller]: ${data}`);
+		  console.log(`[poller]:\n ${data}`);
 		});
 
 		poller.stderr.on('data', (data) => {
-		  console.log(`[poller]: ${data}`);
+		  console.log(`[poller]:\n ${data}`);
 		});
 
 		poller.on('close', (code) => {
-		  console.log(`[poller]: exited with code ${code}`);
+		  console.log(`[poller]:\n exited with code ${code}`);
 		});
 
 
@@ -211,7 +287,7 @@ process.on("SIGTERM",gracefulExit);
 process.on("exit",gracefulExit);
 
 function gracefulExit(){
-	console.log("Shutting down");
+	log("Shutting down");
 	poller.kill("SIGTERM");
 	tests.kill("SIGTERM");
 	process.exit(0);

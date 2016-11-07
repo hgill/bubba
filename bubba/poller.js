@@ -64,7 +64,7 @@ Rx.Observable.interval(60*1000*1)
 									rxmysqlquery({
 										sql:"CALL getValidSubscribersAndLatestContent(?)",
 										values:[r.t_sha256]
-									}).flatMap(([[subscriptions,[content]]])=>{
+									}).flatMap(([[subscriptions,[content]]])=>{//screwed up return cuz of multiple queries - fix in future v
 										return Rx.Observable.from(subscriptions)
 													.flatMap((sub)=>{
 														let restofresponse=JSON.parse(content.c_restofresponse);
@@ -85,7 +85,7 @@ Rx.Observable.interval(60*1000*1)
 																	return rxmysqlquery({
 																		sql:q,
 																		values:[sub.sub_sha256,content.c_sha256]
-																	}).map((d)=>({success:"Sent and saved",subcb:sub.sub_callback,topic:r.t_url}))
+																	}).map((d)=>({success:"Sent and saved",subcb:sub.sub_sha256,topic:r.t_url}))
 																})
 																.catch((err)=>{
 																	let q="CALL markSubscriptionSuspended(?)";
@@ -93,7 +93,7 @@ Rx.Observable.interval(60*1000*1)
 																	return rxmysqlquery({
 																		sql:q,
 																		values:[sub.sub_sha256]
-																	}).map((d)=>({error:(err.message?err.message:err),subcb:sub.sub_callback}))
+																	}).map((d)=>({error:(err.message?err.message:err),subcb:sub.sub_sha256}))
 																})
 														//If no response(catch), mark sub as error here
 													})

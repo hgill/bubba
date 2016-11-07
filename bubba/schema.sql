@@ -212,13 +212,13 @@ BEGIN
 END//
 
 DROP PROCEDURE IF EXISTS `markSubscriptionSuspended`;//
-CREATE PROCEDURE markCallbackSuspended(IN subSha TEXT)
+CREATE PROCEDURE markSubscriptionSuspended(IN subSha TEXT)
 BEGIN
   UPDATE subscriptions SET sub_suspended=true WHERE sub_sha256=subSha;
 END//
 
 DROP PROCEDURE IF EXISTS `removeSubscriptionSuspended`;//
-CREATE PROCEDURE removeCallbackSuspended(IN subSha TEXT)
+CREATE PROCEDURE removeSubscriptionSuspended(IN subSha TEXT)
 BEGIN
   UPDATE subscriptions SET sub_suspended=false WHERE sub_sha256=subSha;
 END//
@@ -231,21 +231,31 @@ BEGIN
   UPDATE subscriptions SET ref_last_c_sha256=lastcsha WHERE sub_sha256=subSha;
 END//
 
+DROP PROCEDURE IF EXISTS `getAllSuspendedByCallback`;//
+CREATE PROCEDURE getAllSuspendedByCallback(IN callback TEXT)
+BEGIN
+  select * from subscriptions where sub_callback=callback and sub_suspended=true;
+END//
+
+
+DROP PROCEDURE IF EXISTS `reconcileSubscription`;//
+CREATE PROCEDURE reconcileSubscription(IN subSha TEXT)
+BEGIN
+DECLARE ssha TEXT;
+DECLARE scb TEXT;
+DECLARE clastsha TEXT;
+DECLARE tsha TEXT;
+DECLARE after TEXT;
+DECLARE url TEXT;
+
+select sub_sha256,sub_callback,ref_last_c_sha256,subscriptions.ref_t_sha256,c_added,t_url from subscriptions left join content on subscriptions.ref_last_c_sha256=content.c_sha256 left join topics on subscriptions.ref_t_sha256=topics.t_sha256 where subscriptions.sub_sha256=subSha into ssha,scb,clastsha,tsha,after,url;
+
+if clastsha is null THEN
+  select ssha,scb,tsha,url,c1.* from content c1 where c1.c_statusCode!=304 c1.ref_t_sha256=tsha order by c1.c_added asc;
+else 
+  select ssha,scb,tsha,url,c1.* from content c1 where c1.c_statusCode!=304 AND c1.c_added>=after and c1.ref_t_sha256=tsha order by c1.c_added asc;
+end if;
+
+END//
+
 DELIMITER ;
-
-
-/*******WIP
-Just input sub_sha as input - get all content after stored 
-
---Add IF subscriptions.ref_last_c_sha256 null clause as a higher level JS check;
-
-select sub_sha256,sub_callback,ref_last_c_sha256,subscriptions.ref_t_sha256,c_added,t_url from subscriptions left join content on subscriptions.ref_last_c_sha256=content.c_sha256 left join topics on subscriptions.ref_t_sha256=topics.t_sha256 where subscriptions.sub_sha256="06cbbcb7f8c3b7b675cfc017b8cd841d5837335d26672a453343f185af101710" into @ssha,@scb,@clastsha,@tsha,@after,@url;
-
-
-select @ssha,@scb,@clastsha,@tsha,@after,@url,c1.* from content c1 where c1.c_statusCode!=304 AND c1.c_added>=@after and c1.ref_t_sha256=@tsha order by c1.c_added asc;
-
-
-
-
-
-************/
