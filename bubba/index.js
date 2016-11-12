@@ -202,8 +202,10 @@ function reconcileSubscriptionsSequentially(subRows){
 										return rxrequest({url:cRow.scb,
 															method:"POST",
 															json:true,
-															body:{restofresponse:cRow.c_restofresponse,
-																body:cRow.c_body,
+															body:{
+																fetch:Object.assign({},
+																	cRow.c_restofresponse,
+																	{body:cRow.c_body}),
 																topic:cRow.url,
 																reconciling:true},
 															timeout:10000

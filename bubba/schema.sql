@@ -15,20 +15,18 @@
 /*!40101 SET @OLD_SQL_MODE=@@SQL_MODE, SQL_MODE='NO_AUTO_VALUE_ON_ZERO' */;
 /*!40111 SET @OLD_SQL_NOTES=@@SQL_NOTES, SQL_NOTES=0 */;
 
--- SET NAMES `utf8mb4`;
--- CREATE DATABASE BUBBA CHARACTER SET utf8mb4;
+
+SET NAMES utf8mb4;
+
+CREATE DATABASE IF NOT EXISTS BUBBA CHARACTER SET utf8mb4;
 
 USE BUBBA;
-SET NAMES utf8mb4;
 
 --
 -- Table structure for table `subscriptions`
 --
 
-DROP TABLE IF EXISTS `subscriptions`;
-/*!40101 SET @saved_cs_client     = @@character_set_client */;
-/*!40101 SET character_set_client = utf8mb4 */;
-CREATE TABLE `subscriptions` (
+CREATE TABLE IF NOT EXISTS `subscriptions` (
   `sub_sha256` varchar(64) NOT NULL,
   `sub_created` varchar(24) NOT NULL,
   `sub_updated` varchar(24) NOT NULL,
@@ -41,16 +39,12 @@ CREATE TABLE `subscriptions` (
   `sub_suspended` BOOLEAN DEFAULT FALSE,
   PRIMARY KEY (`sub_sha256`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Subscription requests';
-/*!40101 SET character_set_client = @saved_cs_client */;
 
 --
 -- Table structure for table `topics`
 --
 
-DROP TABLE IF EXISTS `topics`;
-/*!40101 SET @saved_cs_client     = @@character_set_client */;
-/*!40101 SET character_set_client = utf8mb4 */;
-CREATE TABLE `topics` (
+CREATE TABLE IF NOT EXISTS `topics` (
   `t_sha256` varchar(64) NOT NULL,
   `t_url` text NOT NULL,
   `t_added` varchar(24) NOT NULL,
@@ -60,63 +54,36 @@ CREATE TABLE `topics` (
   `t_nextFetchDue` varchar(40), -- updated at every fetch - ISO date 
   PRIMARY KEY (`t_sha256`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-/*!40101 SET character_set_client = @saved_cs_client */;
-/*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
-
-/*!40101 SET SQL_MODE=@OLD_SQL_MODE */;
-/*!40014 SET FOREIGN_KEY_CHECKS=@OLD_FOREIGN_KEY_CHECKS */;
-/*!40014 SET UNIQUE_CHECKS=@OLD_UNIQUE_CHECKS */;
-/*!40101 SET CHARACTER_SET_CLIENT=@OLD_CHARACTER_SET_CLIENT */;
-/*!40101 SET CHARACTER_SET_RESULTS=@OLD_CHARACTER_SET_RESULTS */;
-/*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
-/*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
 
 --
 -- Table structure for table `content`
 --
-
-DROP TABLE IF EXISTS `content`;
-/*!40101 SET @saved_cs_client     = @@character_set_client */;
-/*!40101 SET character_set_client = utf8mb4 */;
-CREATE TABLE `content` (
+CREATE TABLE IF NOT EXISTS `content` (
   `c_sha256` varchar(64) NOT NULL,
   `ref_t_sha256` varchar(64) NOT NULL,
   `c_added` varchar(24) NOT NULL,
-  `c_body` text,
+  `c_body` mediumtext,
   `c_restofresponse` text, -- assigned POLL initially, can be changed to PUSH later
   `c_statusCode` INT,
   PRIMARY KEY (`c_sha256`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-/*!40101 SET character_set_client = @saved_cs_client */;
-/*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
 
-/*!40101 SET SQL_MODE=@OLD_SQL_MODE */;
-/*!40014 SET FOREIGN_KEY_CHECKS=@OLD_FOREIGN_KEY_CHECKS */;
-/*!40014 SET UNIQUE_CHECKS=@OLD_UNIQUE_CHECKS */;
-/*!40101 SET CHARACTER_SET_CLIENT=@OLD_CHARACTER_SET_CLIENT */;
-/*!40101 SET CHARACTER_SET_RESULTS=@OLD_CHARACTER_SET_RESULTS */;
-/*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
-/*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
 
-DROP TABLE IF EXISTS `errors`;
-/*!40101 SET @saved_cs_client     = @@character_set_client */;
-/*!40101 SET character_set_client = utf8mb4 */;
-CREATE TABLE `errors` (
+CREATE TABLE IF NOT EXISTS `serverlog` (
+  `l_added` varchar(24),
+  `l_instance` text,
+  `l_message` text,
+  `l_arguments` text
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+
+CREATE TABLE IF NOT EXISTS `errors` (
   `ref_X_sha256` varchar(64) NOT NULL,
   `e_reftype` VARCHAR(20) NOT NULL,
   `e_content` text NOT NULL,
   `e_added` varchar(24) NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-/*!40101 SET character_set_client = @saved_cs_client */;
-/*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
 
-/*!40101 SET SQL_MODE=@OLD_SQL_MODE */;
-/*!40014 SET FOREIGN_KEY_CHECKS=@OLD_FOREIGN_KEY_CHECKS */;
-/*!40014 SET UNIQUE_CHECKS=@OLD_UNIQUE_CHECKS */;
-/*!40101 SET CHARACTER_SET_CLIENT=@OLD_CHARACTER_SET_CLIENT */;
-/*!40101 SET CHARACTER_SET_RESULTS=@OLD_CHARACTER_SET_RESULTS */;
-/*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
-/*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
 
 DELIMITER //
 DROP PROCEDURE IF EXISTS `unsubscribe`;//
@@ -176,7 +143,7 @@ END//
 DROP PROCEDURE IF EXISTS `saveFetchContent`;//
 CREATE PROCEDURE saveFetchContent(IN c_sha TEXT,
                                   IN t_sha TEXT,                                  
-                                  IN body TEXT,
+                                  IN body mediumtext,
                                   IN restofresponse TEXT,
                                   IN now TEXT,
                                   IN lastModified TEXT,
@@ -251,11 +218,21 @@ DECLARE url TEXT;
 select sub_sha256,sub_callback,ref_last_c_sha256,subscriptions.ref_t_sha256,c_added,t_url from subscriptions left join content on subscriptions.ref_last_c_sha256=content.c_sha256 left join topics on subscriptions.ref_t_sha256=topics.t_sha256 where subscriptions.sub_sha256=subSha into ssha,scb,clastsha,tsha,after,url;
 
 if clastsha is null THEN
-  select ssha,scb,tsha,url,c1.* from content c1 where c1.c_statusCode!=304 c1.ref_t_sha256=tsha order by c1.c_added asc;
+  select ssha,scb,tsha,url,c1.* from content c1 where c1.c_statusCode!=304 AND c1.ref_t_sha256=tsha order by c1.c_added asc;
 else 
   select ssha,scb,tsha,url,c1.* from content c1 where c1.c_statusCode!=304 AND c1.c_added>=after and c1.ref_t_sha256=tsha order by c1.c_added asc;
 end if;
 
+END//
+
+
+DROP PROCEDURE IF EXISTS `saveLog`;//
+CREATE PROCEDURE saveLog(IN added TEXT,
+                          IN instance TEXT,
+                          IN message TEXT,
+                          IN arguments TEXT)
+BEGIN
+  INSERT INTO serverlog(l_added,l_instance,l_message,l_arguments) VALUES(added,instance,message,arguments);
 END//
 
 DELIMITER ;
