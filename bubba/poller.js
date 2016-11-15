@@ -24,7 +24,8 @@ let storedprocs={
 
 let globals={timeout:10000/* ms */,
 			defaultrefetch:30/* min*/,
-			minrefetch:5/*min*/,
+			minrefetchOnUseful:5/*min*/,
+			minrefetchOnNotUseful:15/*min*/,
 			maxrefetch:8*60 /*min*/,
 			backoff:2.0,/* multiplier */
 			isoORhtmlformat:[moment.ISO_8601,"ddd, DD MMM YYYY H:mm:ss [GMT]"]
@@ -68,8 +69,8 @@ Rx.Observable.interval(60*1000*1)
 
 	return Rx.Observable.from(results)
 		.flatMap((r)=>{ 
-			let headers=!_.isEmpty(r.t_lastmodified)?
-						{"If-Modified-Since":moment(r.t_lastmodified,globals.isoORhtmlformat)
+			let headers=!_.isEmpty(r.t_lastModified)?
+						{"If-Modified-Since":moment(r.t_lastModified,globals.isoORhtmlformat)
 											.format("ddd, DD MMM YYYY H:mm:ss [GMT]")}
 						:{};
 
@@ -85,11 +86,9 @@ Rx.Observable.interval(60*1000*1)
 					},1)
 					.do((d)=>{
 						/*Side effect - send to subscribers*/
-
-						switch(Math.floor(d.statusCode/100)){
-							case 2: pushToSubscribers(r);break;
-							case 3: break;
-							default:throw Error("Bad Status Code on 2nd check: Shouldn't have happened")
+						switch(d.status){
+							case "CONTENT_INSERTED": pushToSubscribers(r);break;
+							default: _.noop();
 						}
 					})
 					.catch(function (error) {
@@ -112,9 +111,12 @@ Rx.Observable.interval(60*1000*1)
 			    	Success means url was either 2XX or 3XX, had valid headers, and saved to DB successfully.
 			    	Errors means something failed - either in request or in DB
 			    	*/
-			    	 _.isEqual(d.status,"success")?aggregate.success[d.topic]=d.statusCode:aggregate.errors.push(d.topic);
+			    	if(!_.has(aggregate,d.status))
+			    		aggregate[d.status]={};
+
+			    	 aggregate[d.status][d.topic]=`[${d.statusCode},${d.fromNow}]`;
 			    	 return aggregate;
-			    },{startRun:startRun.toISOString(),endRun:"",success:{},errors:[]})
+			    },{startRun:startRun.toISOString(),endRun:""})
 },1)
 .subscribe((d)=>{
 	/* End of a VALID run */
@@ -122,7 +124,7 @@ Rx.Observable.interval(60*1000*1)
 	d.endRun=moment().toISOString();
 	log("Run Complete",d);
 },e=>{
-	log("Run Error - Polling Stopped ",e.message);
+	log("Run Error - POLLING STOPPED: ",e.message);
 });
 
 function getSHA256(str){
@@ -131,28 +133,85 @@ function getSHA256(str){
 	return shaObj.getHash("HEX");
 }
 
-function expBackoff(useful,current,last,lowerMinLimit,upperMinLimit){
+function expBackoff(useful,current,last){
+	//expects moment dates
 	let diff=current.diff(last,"minutes");
 	let bo=globals.backoff;
 	let diff2=useful?diff/bo:diff*bo;
-	
-	diff2=_.clamp(diff2,lowerMinLimit,upperMinLimit);
+
+	if(useful)
+		diff2=_.clamp(diff2,globals.minrefetchOnUseful,globals.maxrefetch);
+	else
+		diff2=_.clamp(diff2,globals.minrefetchOnNotUseful,globals.maxrefetch);
 
 	return moment(current).add(diff2,"minutes");
 }
 
 function saveFetchContent(response,row){
-	let now=moment();
+	let now=moment();// to get correct delays in moment.diff
 
+	/************* SAVE IN DB LOGIC **************/
+	let restofresponse=_(response).pickBy((d)=>{return _.isNumber(d) || _.isString(d)}).omit("body").value();
+	restofresponse.headers=response.headers;
+	
+	let c_sha256=getSHA256(row.t_url+","+response.body);
+	
+	switch(Math.floor(response.statusCode/100)){
+		case 2:	return rxmysqlquery({sql:`CALL saveFetchContent(?,?,?,?,?,?);`,
+					values:[c_sha256,
+							row.t_sha256,
+							response.body,
+							JSON.stringify(restofresponse),
+							moment().toISOString(),
+							response.statusCode,
+							]
+					})
+			.flatMap(([[[d]]])=>{//Fuck I hate SQL
+				let newDates;
+				switch(d.retval){
+					case "CONTENT_DUPLICATE": newDates=getNewDates(response,row,false);break;
+					case "CONTENT_INSERTED": newDates=getNewDates(response,row,true);break;
+					default:throw Error("Shouldn't have happened");
+				}
+				let {newLastModified,nextFetchDue}=newDates;
+
+				return rxmysqlquery({sql:`CALL updateTopicDates(?,?,?)`,
+					values:[row.t_sha256,
+							newLastModified,
+							nextFetchDue
+							]
+					}).map((d2)=>{
+						return {status:d.retval,topic:row.t_url,statusCode:response.statusCode,fromNow:moment(nextFetchDue).diff(now,"minutes")}
+					})
+			});break;
+		case 3: 									
+				let {newLastModified,nextFetchDue}=getNewDates(response,row,false);
+					return rxmysqlquery({sql:`CALL updateTopicDates(?,?,?)`,
+							values:[row.t_sha256,
+									newLastModified,
+									nextFetchDue
+									]
+					}).map((d2)=>{
+						return {status:"NOCHANGE_304",topic:row.t_url,statusCode:response.statusCode,fromNow:moment(nextFetchDue).diff(now,"minutes")}
+					});break;
+		default: return Rx.Observable.of({status:"error",topic:row.t_url,statusCode:response.statusCode})
+	}
+
+}
+function getNewDates(response,row,useful){
+	let now=moment();
+	let hlastmod=response.headers["last-modified"];
+	let rlastmod=row.t_lastmodified;
+	let hdate=response.headers["date"];
 	/* Fill most relevant dates available*/
-	let reslastmod=!_.isEmpty(response.headers["last-modified"])?
-				moment(response.headers["last-modified"],globals.isoORhtmlformat)
-				:(!_.isEmpty(row.t_lastmodified)?
-					moment(row.t_lastmodified,globals.isoORhtmlformat)
+	let reslastmod=!_.isEmpty(hlastmod)?
+				moment(hlastmod,globals.isoORhtmlformat)
+				:(!_.isEmpty(rlastmod)?
+					moment(rlastmod,globals.isoORhtmlformat)
 					:now);
 
-	let resdate=!_.isEmpty(response.headers["date"])?
-				moment(response.headers["last-modified"],globals.isoORhtmlformat)
+	let resdate=!_.isEmpty(hdate)?
+				moment(hdate,globals.isoORhtmlformat)
 				:now;
 
 	let nextFetchDue;
@@ -162,7 +221,7 @@ function saveFetchContent(response,row){
 			If not, mark warning, use defaultrefetch for nextfetchdue
 			If yes, calculate exponential backoff						
 	********************/
-	if(resdate.isSameOrAfter(now) || reslastmod.isSameOrAfter(now)){
+	if(response.statusCode!==304 && (resdate.isSameOrAfter(now) || reslastmod.isSameOrAfter(now))){
 		//If the dates don't make sense - Guesstimate for whether server is reporting GMT
 		rxmysqlquery({sql:"CALL saveError(?,?,?,?)",
 						values:[row.t_sha256,
@@ -173,37 +232,19 @@ function saveFetchContent(response,row){
 		nextFetchDue=now.add(globals.defaultrefetch,"minutes");//Don't do BO calculations, hard code at 30 minutes.
 	}else{
 		//Dates are GMT - then do BO calculations.
-		nextFetchDue=expBackoff(response.statusCode===304?false:true,now,reslastmod,globals.minrefetch,globals.maxrefetch);
+		if(useful)
+			nextFetchDue=expBackoff(useful,now,reslastmod);
+		else if(!useful)
+			nextFetchDue=expBackoff(useful,now,moment(rlastmod));
 	}
-	/****************** Next Fetch Due Calc - END ********************/							
-
-	/************* SAVE IN DB LOGIC **************/
-	let restofresponse=_(response).pickBy((d)=>{return _.isNumber(d) || _.isString(d)}).omit("body").value();
-	restofresponse.headers=response.headers;
 	
-	let c_sha256=getSHA256(row.t_sha256+response.body+JSON.stringify(response.headers)+response.statusCode);
-	
-	switch(Math.floor(response.statusCode/100)){
-		case 3: 
-		case 2:	return rxmysqlquery({sql:"CALL saveFetchContent(?,?,?,?,?,?,?,?)",
-					values:[c_sha256,
-							row.t_sha256,
-							response.body,
-							JSON.stringify(restofresponse),
-							moment().toISOString(),
-							reslastmod.toISOString(),
-							nextFetchDue.toISOString(),
-							response.statusCode]
-					})
-			.map(d=>{
-				console.log("[poller] Save: ",d);
-				return {status:"success",topic:row.t_url,statusCode:response.statusCode
-			}})
-				break;
-		default: throw Error("Bad Status Code: "+response.statusCode);
-	}
+	/****************** Next Fetch Due Calc - END ********************/	
+	if(useful)
+		return {newLastModified:reslastmod.toISOString(),nextFetchDue:nextFetchDue.toISOString()}
+	else return {newLastModified:moment(rlastmod).toISOString(),nextFetchDue:nextFetchDue.toISOString()}
 
 }
+
 
 function pushToSubscribers(r){
 
@@ -230,7 +271,7 @@ function pushToSubscribers(r){
 							return rxmysqlquery({
 								sql:q,
 								values:[sub.sub_sha256,content.c_sha256]
-							}).map((d)=>({success:"Sent and saved",subcb:sub.sub_sha256,topic:r.t_url}))
+							}).map((d)=>({success:"Pushed",subcb:sub.sub_sha256,topic:r.t_url}))
 						})
 						.catch((err)=>{
 							let q="CALL markSubscriptionSuspended(?)";
@@ -242,7 +283,11 @@ function pushToSubscribers(r){
 						})
 			})
 	})				
-	.subscribe((d)=>{console.log(d);},(err)=>{log("Push Error",err.message)});
+	.subscribe((d)=>{
+		if(d.error)
+			log(d);
+		else _.noop();
+	},(err)=>{log("Push Error",err.message)});
 }
 function log(){
 	/* Expect args[0] to be a string and args[1] to be an object */

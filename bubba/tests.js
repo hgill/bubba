@@ -14,7 +14,7 @@ var server = require('http').Server(app);
 
 
 
-let topicKeys=["t_sha256","t_url","t_subscriptions","t_lastmodified","t_nextFetchDue","t_type","t_added"];
+let topicKeys=["t_sha256","t_url","t_subscriptions","t_lastModified","t_nextFetchDue","t_type","t_added"];
 let subKeys=["sub_sha256","sub_created","sub_updated","sub_callback","ref_t_sha256","sub_lease_seconds","sub_lease_end","sub_secret","ref_last_c_sha256","sub_suspended"];
 
 

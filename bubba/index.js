@@ -99,7 +99,7 @@ app.post("/",function(req,res){
 							res.status(200).send(safeBody);	
 						})
 						.flatMap(reconcileSubscriptionsSequentially,1)
-						.subscribe((d)=>{log("Recon End: ",d)},(err)=>{log("Recon Err: ",err.message)});
+						.subscribe((d)=>{log("Recon End",_.omit(d,"subRow"))},(err)=>{log("Recon Err: ",err.message)});
 						break;
 		default:throw Error("Shouldn't have happened");
 	}

@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS `subscriptions` (
   `sub_updated` varchar(24) NOT NULL,
   `sub_callback` text NOT NULL,
   `ref_t_sha256` varchar(64) NOT NULL,
-  `sub_lease_seconds` int(11) NOT NULL,
+  `sub_lease_seconds` int NOT NULL,
   `sub_lease_end` varchar(24) NOT NULL,
   `sub_secret` varchar(64),
   `ref_last_c_sha256` varchar(64),
@@ -48,9 +48,9 @@ CREATE TABLE IF NOT EXISTS `topics` (
   `t_sha256` varchar(64) NOT NULL,
   `t_url` text NOT NULL,
   `t_added` varchar(24) NOT NULL,
-  `t_subscriptions` int(11) NOT NULL DEFAULT 1,
+  `t_subscriptions` int NOT NULL DEFAULT 1,
   `t_type` VARCHAR(4) NOT NULL DEFAULT "POLL", -- assigned POLL initially, can be changed to PUSH later
-  `t_lastmodified` varchar(40), -- updated at every fetch - http date from fetch
+  `t_lastModified` varchar(40), -- updated at every fetch - http date from fetch
   `t_nextFetchDue` varchar(40), -- updated at every fetch - ISO date 
   PRIMARY KEY (`t_sha256`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
@@ -137,7 +137,7 @@ END//
 DROP PROCEDURE IF EXISTS `getPollTopics`;//
 CREATE PROCEDURE getPollTopics(IN isonow VARCHAR(24))
 BEGIN
-  SELECT * FROM topics WHERE (t_type="POLL" OR t_type="ERR") AND ((STRCMP(t_nextFetchDue,isonow)=-1) OR (t_nextFetchDue IS NULL) OR (t_nextFetchDue=''));
+  SELECT * FROM topics WHERE (t_type="POLL" OR t_type="ERR") AND t_subscriptions>0 AND((STRCMP(t_nextFetchDue,isonow)=-1) OR (t_nextFetchDue IS NULL) OR (t_nextFetchDue=''));
 END//
 
 DROP PROCEDURE IF EXISTS `saveFetchContent`;//
@@ -146,19 +146,36 @@ CREATE PROCEDURE saveFetchContent(IN c_sha TEXT,
                                   IN body mediumtext,
                                   IN restofresponse TEXT,
                                   IN now TEXT,
-                                  IN lastModified TEXT,
-                                  IN nextFetchDue TEXT,
-                                  IN statusCode INT
-                                  )
+                                  IN statusCode INT)
 BEGIN
-  UPDATE topics SET t_lastmodified=lastModified, t_nextFetchDue=nextFetchDue,t_type="POLL" WHERE t_sha256=t_sha;
-  INSERT INTO content(ref_t_sha256,c_sha256,c_body,c_restofresponse,c_added,c_statusCode) VALUES(t_sha,c_sha,body,restofresponse,now,statusCode);
+    DECLARE dup INT DEFAULT 0;
+    DECLARE retval text;
+
+    select count(*) from content where c_sha256=c_sha into dup;
+
+    if dup=1 then
+        set retval="CONTENT_DUPLICATE";
+    else 
+      INSERT INTO content(ref_t_sha256,c_sha256,c_body,c_restofresponse,c_added,c_statusCode) 
+        VALUES(t_sha,c_sha,body,restofresponse,now,statusCode);
+        set retval="CONTENT_INSERTED";
+    end if;
+    select retval;
+END//
+
+DROP PROCEDURE IF EXISTS `updateTopicDates`;//
+CREATE PROCEDURE updateTopicDates(IN t_sha TEXT,
+                                  IN lastmodified text,
+                                  in nextfetchdue text)
+BEGIN
+    UPDATE topics set t_lastModified=lastmodified,t_nextFetchDue=nextfetchdue where t_sha256=t_sha;
 END//
 
 DROP PROCEDURE IF EXISTS `markTopicError`;//
 CREATE PROCEDURE markTopicError(IN t_sha TEXT)
 BEGIN
-  UPDATE topics SET t_lastmodified=NULL, t_nextFetchDue=NULL,t_type="ERR" WHERE t_sha256=t_sha;
+  UPDATE topics SET t_lastModified=NULL, t_nextFetchDue=NULL,t_type="ERR" 
+    WHERE t_sha256=t_sha;
 END//
 
 DROP PROCEDURE IF EXISTS `saveError`;//
